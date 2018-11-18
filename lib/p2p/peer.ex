@@ -2,8 +2,9 @@ defmodule Elixium.P2P.Peer do
   alias Elixium.Store.Oracle
   require Logger
 
-  @testnet_url 'https://registry.testnet.elixium.app/'
   @default_port 31_013
+
+
 
   @moduledoc """
     Contains functionality for communicating with other peers
@@ -94,8 +95,10 @@ defmodule Elixium.P2P.Peer do
   # Connects to the bootstrapping peer registry and returns a list of
   # previously connected peers.
   @spec fetch_peers_from_registry(integer) :: List
-  defp fetch_peers_from_registry(port) do
-    case :httpc.request(@testnet_url ++ '/' ++ Integer.to_charlist(port)) do
+  def fetch_peers_from_registry(port) do
+    url = Application.get_env(:elixium_core, :registry_url)
+
+    case :httpc.request(url ++ '/' ++ Integer.to_charlist(port)) do
       {:ok, {{'HTTP/1.1', 200, 'OK'}, _headers, body}} ->
         peers =
           body
@@ -126,11 +129,11 @@ defmodule Elixium.P2P.Peer do
         :error -> nil
       end
 
-    if Mix.env == :dev do
-      {'localhost', port}
-    else
+  #  if Mix.env == :dev do
+  #    {'localhost', port}
+  #  else
       {ip, port}
-    end
+  #  end
   end
 
 end

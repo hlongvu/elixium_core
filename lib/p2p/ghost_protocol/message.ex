@@ -1,13 +1,10 @@
 defmodule Elixium.P2P.GhostProtocol.Message do
-  require IEx
   alias Elixium.Utilities
   require Logger
 
   @moduledoc """
     Create and read messages that are sent over TCP
   """
-
-  @protocol_version "v1.0"
 
   @doc """
     Create an unencrypted message that will be passed to a peer, with the
@@ -17,8 +14,9 @@ defmodule Elixium.P2P.GhostProtocol.Message do
   def build(type, message_map) do
     message = binary_message(type, message_map)
     bytes = message_byte_size(message)
+    version = Application.get_env(:elixium, :ghost_protocol_version)
 
-    ["Ghost", bytes, @protocol_version, message]
+    ["Ghost", bytes, version, message]
     |> Enum.join("|")
   end
 
@@ -27,6 +25,8 @@ defmodule Elixium.P2P.GhostProtocol.Message do
   """
   @spec build(String.t(), map, <<_::256>>) :: String.t()
   def build(type, message_map, session_key) when is_map(message_map) do
+    version = Application.get_env(:elixium, :ghost_protocol_version)
+
     message =
       type
       |> binary_message(message_map)
@@ -36,7 +36,7 @@ defmodule Elixium.P2P.GhostProtocol.Message do
     bytes = message_byte_size(encrypted_message)
 
     message =
-      ["Ghost", bytes, @protocol_version, encrypted_message]
+      ["Ghost", bytes, version, encrypted_message]
       |> Enum.join("|")
 
     {:ok, message}
@@ -50,12 +50,12 @@ defmodule Elixium.P2P.GhostProtocol.Message do
   """
   @spec read(reference) :: map | {:error, :invalid_protocol}
   def read(socket) do
-    {protocol, bytes} = parse_header(socket)
-
+    {protocol, bytes, predata} = parse_header(socket)
+    need = bytes - byte_size(predata)
     if protocol == "Ghost" do
-      {:ok, data} = :gen_tcp.recv(socket, bytes)
+      {:ok, data} = :gen_tcp.recv(socket, need)
 
-      :erlang.binary_to_term(data)
+      :erlang.binary_to_term(predata <> data)
     else
       {:error, :invalid_protocol}
     end
@@ -76,6 +76,7 @@ defmodule Elixium.P2P.GhostProtocol.Message do
     {bytes_body, _} = Integer.parse(bytes)
     take_bytes = bytes_body + byte_size(header)
     need_bytes = take_bytes - byte_size(data)
+
 
     # Sometimes we get a packet with incomplete data. Parse use the byte count
     # in the message header to determine how many bytes we're waiting for and
@@ -152,10 +153,10 @@ defmodule Elixium.P2P.GhostProtocol.Message do
       # Will get "Ghost|00000000|v1.0|" from socket
       |> :gen_tcp.recv(20)
 
-    [protocol, bytes, version, _] = String.split(header, "|")
+    [protocol, bytes, version, predata] = String.split(header, "|")
     {bytes, _} = Integer.parse(bytes)
 
-    {protocol, bytes}
+    {protocol, bytes, predata}
   end
 
   @spec decrypt(bitstring, <<_::256>>) :: map
