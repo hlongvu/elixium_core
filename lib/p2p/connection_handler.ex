@@ -131,6 +131,8 @@ defmodule Elixium.P2P.ConnectionHandler do
     # Tell the master pid that we have a new connection
     if conn_type == :outbound do
       send(master_pid, {:new_outbound_connection, self()})
+    else
+      send(master_pid, {:new_inbound_connection, self()})
     end
 
     handle_connection(socket, session_key, master_pid, oracle)
@@ -176,7 +178,7 @@ defmodule Elixium.P2P.ConnectionHandler do
         Logger.info("Sending data to peer: #{peername}")
         Logger.info("Time #{:os.system_time(:millisecond)}")
 
-        if (type == "PING") do
+        if type == "PING" do
           Process.put(:last_ping_time, :os.system_time(:millisecond))
         end
 
@@ -244,7 +246,5 @@ defmodule Elixium.P2P.ConnectionHandler do
       :not_found -> false
       {_identifier, _password} -> true
     end
-
-    false
   end
 end
