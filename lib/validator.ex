@@ -4,6 +4,7 @@ defmodule Elixium.Validator do
   alias Elixium.KeyPair
   alias Elixium.Store.Ledger
   alias Elixium.Store.Utxo
+  alias Elixium.BlockEncoder
   alias Decimal, as: D
 
   @moduledoc """
@@ -16,21 +17,21 @@ defmodule Elixium.Validator do
     when recalculated, is the same as what the listed block hash is
   """
   @spec is_block_valid?(Block, number) :: :ok | {:error, any}
-  def is_block_valid?(%{index: 0} = block, difficulty) do
-    valid_hash?(block, difficulty)
-  end
-
-
   def is_block_valid?(block, difficulty, last_block \\ Ledger.last_block(), pool_check \\ &Utxo.in_pool?/1) do
-    with :ok <- valid_index(block.index, last_block.index),
-         :ok <- valid_prev_hash?(block.previous_hash, last_block.hash),
-         :ok <- valid_hash?(block, difficulty),
-         :ok <- valid_coinbase?(block),
-         :ok <- valid_transactions?(block, pool_check),
-         :ok <- valid_timetamp?(block) do
-      :ok
+    if :binary.decode_unsigned(block.index) == 0 do
+      valid_hash?(block, difficulty)
     else
-      err -> err
+      with :ok <- valid_index(block.index, last_block.index),
+           :ok <- valid_prev_hash?(block.previous_hash, last_block.hash),
+           :ok <- valid_hash?(block, difficulty),
+           :ok <- valid_coinbase?(block),
+           :ok <- valid_transactions?(block, pool_check),
+           :ok <- valid_timestamp?(block),
+           :ok <- valid_block_size?(block) do
+        :ok
+      else
+        err -> err
+      end
     end
   end
 
@@ -46,7 +47,7 @@ defmodule Elixium.Validator do
 
   @spec valid_hash?(Block, number) :: :ok | {:error, {:wrong_hash, {:too_high, String.t(), number}}}
   defp valid_hash?(b, difficulty) do
-    with :ok <- compare_hash({b.index, b.version, b.previous_hash, b.timestamp, b.nonce, b.merkle_root}, b.hash),
+    with :ok <- compare_hash(b, b.hash),
          :ok <- beat_target?(b.hash, b.difficulty) do
       :ok
     else
@@ -62,12 +63,9 @@ defmodule Elixium.Validator do
     end
   end
 
-  @spec compare_hash({number, number, String.t(), String.t(), number, String.t()}, String.t()) ::
-          :ok | {:error, {:wrong_hash, {:doesnt_match_provided, String.t(), String.t()}}}
-  defp compare_hash({index, version, previous_hash, timestamp, nonce, merkle_root}, hash) do
-    computed =
-      [Integer.to_string(index), Integer.to_string(version), previous_hash, timestamp, Integer.to_string(nonce), merkle_root]
-      |> Utilities.sha3_base16()
+  @spec compare_hash(Block, String.t()) :: :ok | {:error, {:wrong_hash, {:doesnt_match_provided, String.t(), String.t()}}}
+  defp compare_hash(block, hash) do
+    computed = Block.calculate_block_hash(block)
 
     if computed == hash do
       :ok
@@ -106,7 +104,7 @@ defmodule Elixium.Validator do
     |> Enum.map(fn input ->
       # Ensure that this input is in our UTXO pool
       if pool_check.(input) do
-        {:ok, pub} = Base.decode16(input.addr)
+        pub = KeyPair.address_to_pubkey(input.addr)
         {:ok, sig} = Base.decode16(input.signature)
         # Check if this UTXO has a valid signature
         KeyPair.verify_signature(pub, sig, input.txoid)
@@ -129,7 +127,12 @@ defmodule Elixium.Validator do
   @spec appropriate_coinbase_output?(list, number) :: :ok | {:error, :invalid_coinbase}
   defp appropriate_coinbase_output?([coinbase | transactions], block_index) do
     total_fees = Block.total_block_fees(transactions)
-    reward = Block.calculate_block_reward(block_index)
+
+    reward =
+      block_index
+      |> :binary.decode_unsigned()
+      |> Block.calculate_block_reward()
+
     amount = hd(coinbase.outputs).amount
 
     if D.equal?(D.add(total_fees, reward), amount) do
@@ -139,8 +142,8 @@ defmodule Elixium.Validator do
     end
   end
 
-  @spec valid_timetamp?(Block) :: :ok | {:error, :timestamp_too_high}
-  defp valid_timetamp?(%{timestamp: timestamp}) do
+  @spec valid_timestamp?(Block) :: :ok | {:error, :timestamp_too_high}
+  defp valid_timestamp?(%{timestamp: timestamp}) do
     ftl = Application.get_env(:elixium_core, :future_time_limit)
 
     current_time =
@@ -148,5 +151,18 @@ defmodule Elixium.Validator do
       |> DateTime.to_unix()
 
     if timestamp < current_time + ftl, do: :ok, else: {:error, :timestamp_too_high}
+  end
+
+  @spec valid_block_size?(Block) :: {:ok} | {:error, :block_too_large}
+  defp valid_block_size?(block) do
+    block_size_limit = Application.get_env(:elixium_core, :block_size_limit)
+
+    under_size_limit =
+      block
+      |> BlockEncoder.encode()
+      |> byte_size()
+      |> Kernel.<=(block_size_limit)
+
+    if under_size_limit, do: :ok, else: {:error, :block_too_large}
   end
 end
