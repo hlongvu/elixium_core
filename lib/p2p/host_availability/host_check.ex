@@ -1,6 +1,6 @@
 defmodule Elixium.HostCheck do
+  alias Elixium.Store.Oracle
   use GenServer
-  require IEx
   require Logger
 
   def start_link(_args) do
@@ -13,8 +13,7 @@ defmodule Elixium.HostCheck do
   end
 
   def handle_info(:check_health, state) do
-
-    case GenServer.call(:"Elixir.Elixium.Store.PeerOracle", {:load_known_peers, []}) do
+    case Oracle.inquire(:"Elixir.Elixium.Store.PeerOracle", {:load_known_peers, []}) do
       :not_found -> :ok
       peers -> Enum.each(peers, &attempt_response/1)
     end
@@ -34,16 +33,16 @@ defmodule Elixium.HostCheck do
   end
 
   def handle_info({:tcp, socket, <<1>>}, state) do
-    #Shuffle List
-    {:ok, {add, _port}} = :inet.peername(socket)
-    ip =
-      add
-      |> :inet_parse.ntoa()
+    case :inet.peername(socket) do
+      {:ok, {add, _port}} ->
+        ip = :inet_parse.ntoa(add)
+        Oracle.inquire(:"Elixir.Elixium.Store.PeerOracle", {:reorder_peers, [ip]})
+      {:error, :einval} -> :err
+    end
 
-    GenServer.call(:"Elixir.Elixium.Store.PeerOracle", {:reorder_peers, [ip]})
     {:noreply, state}
   end
 
-  def handle_info({:tcp, _, _}, state), do: {:noreply, state} 
+  def handle_info({:tcp, _, _}, state), do: {:noreply, state}
 
 end

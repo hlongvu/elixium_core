@@ -33,7 +33,7 @@ defmodule Elixium.Block do
   def initialize do
     %Block{
       timestamp: time_unix(),
-      previous_hash: String.duplicate(<<0>>, 64) # 64 bytes of 0
+      previous_hash: String.duplicate("0", 64) # 32 bytes of 0
     }
   end
 
@@ -169,7 +169,7 @@ defmodule Elixium.Block do
 
     D.div(
       D.mult(
-        D.new(total_token_supply),
+        D.from_float(total_token_supply),
         D.new(max(0, block_at_full_emission - block_index))
       ),
       D.new(sigma_full_emission)
