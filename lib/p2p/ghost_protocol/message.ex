@@ -83,9 +83,7 @@ defmodule Elixium.P2P.GhostProtocol.Message do
     # await those bytes
     rest_message =
       if need_bytes > 0 do
-         Logger.info("Not enough bytes! Waiting for #{need_bytes} more bytes...")
          {:ok, missing_bytes} = :gen_tcp.recv(socket, need_bytes)
-         Logger.info("Got the #{need_bytes} bytes! Constructing message")
          missing_bytes
       else
         <<>>
@@ -151,7 +149,7 @@ defmodule Elixium.P2P.GhostProtocol.Message do
     case :gen_tcp.recv(socket, 20) do
       {:ok, header} ->
         # Will get "Ghost|00000000|v1.0|" from socket
-        [protocol, bytes, version, predata] = String.split(header, "|")
+        [protocol, bytes, _version, predata] = String.split(header, "|")
         {bytes, _} = Integer.parse(bytes)
 
         {protocol, bytes, predata}
