@@ -6,7 +6,7 @@ defmodule Elixium.Store.Peer do
     This includes authentication data
   """
 
-  @store_dir ".peers"
+  @store_dir "peers"
 
   def initialize do
     initialize(@store_dir)
@@ -71,10 +71,7 @@ defmodule Elixium.Store.Peer do
       fn ref ->
         case Exleveldb.get(ref, "known_peers") do
           {:ok, peers} ->
-            peers =
-              [peer | :erlang.binary_to_term(peers)]
-              |> Enum.uniq()
-
+            peers = Enum.uniq([peer | :erlang.binary_to_term(peers)])
             Exleveldb.put(ref, "known_peers", :erlang.term_to_binary(peers))
 
           :not_found ->

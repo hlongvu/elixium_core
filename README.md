@@ -13,7 +13,7 @@ way -- decentralized even within the development team. Check out the
 to get started with contributing to Elixium. If you have any trouble getting set
 up or just want to join in with our development discussion, join our
 [Telegram Group](https://t.me/joinchat/JjYPS0WI62EMuMXovyjskA). The
-[Elixium Development Wiki](https://github.com/ElixiumNetwork/elixium_core/wiki)
+[Elixium Development Wiki](https://developers.elixiumnetwork.org)
 is a great place to get familiarized with Elixium's codebase.
 
 ### What we're aiming to solve
@@ -57,7 +57,7 @@ looking at using Hyrax, a zero knowledge protocol that doesn't need a trusted
 setup.
 
 ## Why Elixir?
-Elixir is a language built with Erlang, andErlang powers the entire telecom
+Elixir is a language built with Erlang, and Erlang powers the entire telecom
 industry. This is the language that supports the infrastructure of our mobile
 phone networks. It was built by a company called Ericcson in 1986 for the
 purposes of being distributed, fault tolerant, and to have support for

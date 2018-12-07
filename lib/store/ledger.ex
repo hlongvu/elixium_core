@@ -9,7 +9,7 @@ defmodule Elixium.Store.Ledger do
     is where blocks are stored and fetched
   """
 
-  @store_dir ".chaindata"
+  @store_dir "chaindata"
   @ets_name :chaindata
 
   def initialize do
@@ -97,6 +97,9 @@ defmodule Elixium.Store.Ledger do
     end
   end
 
+  @spec block_at_height(integer) :: Atom
+  def block_at_height(height) when is_integer(height) and height < 0, do: :none
+
   @doc """
     Returns the block at a given index
   """
@@ -126,6 +129,7 @@ defmodule Elixium.Store.Ledger do
     |> max(0)
     |> Range.new(starting_at)
     |> Enum.map(&block_at_height/1)
+    |> Enum.filter(& &1 != :none)
   end
 
   @doc """
@@ -134,7 +138,5 @@ defmodule Elixium.Store.Ledger do
   @spec count_blocks :: integer
   def count_blocks, do: :ets.info(@ets_name, :size)
 
-  def empty? do
-    empty?(@store_dir)
-  end
+  def empty?, do: empty?(@store_dir)
 end
