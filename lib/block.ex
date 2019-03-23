@@ -3,7 +3,6 @@ defmodule Elixium.Block do
   alias Elixium.Utilities
   alias Elixium.Transaction
   alias Elixium.Store.Ledger
-  alias Decimal, as: D
   require Logger
 
   @moduledoc """
@@ -19,6 +18,8 @@ defmodule Elixium.Block do
             timestamp: nil,
             merkle_root: nil,
             transactions: []
+
+  @default_difficulty 3_000_000.0
 
   @doc """
     When the first node on the Elixium network spins up, there won't be any
@@ -92,8 +93,8 @@ defmodule Elixium.Block do
     the hash is lower, it is a valid block, and we can broadcast the block to
     other nodes on the network.
   """
-  @spec mine(Block, Range.t(), number, number) :: Block | :not_in_range
-  def mine(block, nonce_range \\ 0..18446744073709551615, cpu_num \\ 0, hashes \\ 0, last_hashrate_check \\ time_unix()) do
+  @spec mine(Block, Range.t(), number, number, number) :: Block | :not_in_range
+  def mine(block, nonce_range \\ 0..18_446_744_073_709_551_615, cpu_num \\ 0, hashes \\ 0, last_hashrate_check \\ time_unix()) do
     block = Map.put(block, :hash, calculate_block_hash(block))
 
     cond do
@@ -172,26 +173,28 @@ defmodule Elixium.Block do
 
     Where x is total token supply, t is block at full emission, i is block index,
     and s is the sigma of the total_token_supply, the Smooth emission algorithm
-    is as follows: (x * max{0, t - i}) / s
+    is as follows: Round(((x * 10,000,000) * max{0, t - i}) / s) (+1 if i % 172 = 0)
   """
-  @spec calculate_block_reward(number) :: Decimal
+  @spec calculate_block_reward(number) :: integer
   def calculate_block_reward(block_index) do
     sigma_full_emission = Application.get_env(:elixium_core, :sigma_full_emission)
     total_token_supply = Application.get_env(:elixium_core, :total_token_supply)
     block_at_full_emission = Application.get_env(:elixium_core, :block_at_full_emission)
 
-    D.div(
-      D.mult(
-        D.from_float(total_token_supply),
-        D.new(max(0, block_at_full_emission - block_index))
-      ),
-      D.new(sigma_full_emission)
-    )
+    # 10000000000000028 total ions
+
+    total_token_supply
+    |> Kernel.*(10_000_000)
+    |> Kernel.*(max(0, block_at_full_emission - block_index))
+    |> Kernel./(sigma_full_emission)
+    |> Float.round()
+    |> Kernel.+(if rem(block_index, 172) == 0, do: 1, else: 0)
+    |> trunc()
   end
 
-  @spec total_block_fees(list) :: Decimal
+  @spec total_block_fees(list) :: integer
   def total_block_fees(transactions) do
-    Enum.reduce(transactions, D.new(0), fn tx, acc -> D.add(acc, Transaction.calculate_fee(tx)) end)
+    Enum.reduce(transactions, 0, & Transaction.calculate_fee(&1) + &2)
   end
 
   @doc """
@@ -214,7 +217,7 @@ defmodule Elixium.Block do
     index = :binary.decode_unsigned(block.index)
 
     if index < 11 do
-      3_000_000.0
+      @default_difficulty
     else
       blocks_to_weight =
         :elixium_core
@@ -230,20 +233,31 @@ defmodule Elixium.Block do
     retargeting_window = Application.get_env(:elixium_core, :retargeting_window)
     target_solvetime = Application.get_env(:elixium_core, :target_solvetime)
 
-    # If we don't have enough blocks to fill our retargeting window, the
-    # algorithm won't run properly (difficulty will be set too high). Let's scale
-    # the algo down until then.
-    retargeting_window = min(block.index, retargeting_window)
+    index =
+      if is_binary(block.index) do
+        :binary.decode_unsigned(block.index)
+      else
+        block.index
+      end
 
-    {weighted_solvetimes, summed_difficulties} = weight_solvetimes_and_sum_difficulties(blocks_to_weight)
+    if index < 11 do
+      @default_difficulty
+    else
+      # If we don't have enough blocks to fill our retargeting window, the
+      # algorithm won't run properly (difficulty will be set too high). Let's scale
+      # the algo down until then.
+      retargeting_window = min(block.index, retargeting_window)
 
-    min_timespan = (target_solvetime * retargeting_window) / 2
+      {weighted_solvetimes, summed_difficulties} = weight_solvetimes_and_sum_difficulties(blocks_to_weight)
 
-    weighted_solvetimes = if weighted_solvetimes < min_timespan, do: min_timespan, else: weighted_solvetimes
+      min_timespan = (target_solvetime * retargeting_window) / 2
 
-    target = (retargeting_window + 1) / 2 * target_solvetime
+      weighted_solvetimes = if weighted_solvetimes < min_timespan, do: min_timespan, else: weighted_solvetimes
 
-    summed_difficulties * target / weighted_solvetimes
+      target = (retargeting_window + 1) / 2 * target_solvetime
+
+      summed_difficulties * target / weighted_solvetimes
+    end
   end
 
   def weight_solvetimes_and_sum_difficulties(blocks) do

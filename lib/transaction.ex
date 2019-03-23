@@ -2,7 +2,6 @@ defmodule Elixium.Transaction do
   alias Elixium.Transaction
   alias Elixium.Utilities
   alias Elixium.Utxo
-  alias Decimal, as: D
 
   @moduledoc """
     Contains all the functions that pertain to creating valid transactions
@@ -15,7 +14,7 @@ defmodule Elixium.Transaction do
             # Most transactions will be pay-to-public-key
             txtype: "P2PK"
 
-  @spec calculate_outputs(Transaction, Map) :: %{outputs: list, fee: Decimal}
+  @spec calculate_outputs(Transaction, Map) :: %{outputs: list, fee: integer}
   def calculate_outputs(transaction, designations) do
     outputs =
       designations
@@ -30,6 +29,38 @@ defmodule Elixium.Transaction do
 
     %{outputs: outputs}
   end
+
+  @doc """
+    Creates a signature list based on unique addresses in the inputs. One signature
+    is needed for each address.
+  """
+  @spec create_sig_list(List, Map) :: List
+  def create_sig_list(inputs, transaction) do
+    digest = signing_digest(transaction)
+
+    inputs
+    |> Enum.uniq_by(& &1.addr)
+    |> Enum.map(fn %{addr: addr} ->
+      priv = Elixium.KeyPair.get_priv_from_file(addr)
+      sig = Elixium.KeyPair.sign(priv, digest)
+      {addr, sig}
+    end)
+  end
+
+  @doc """
+    Take the correct amount of Utxo's to send the alloted amount in a transaction.
+  """
+  @spec take_necessary_utxos(List, integer) :: List | :not_enough_balance
+  def take_necessary_utxos(utxos, amount), do: take_necessary_utxos(utxos, [], amount)
+
+  @spec take_necessary_utxos(List, List, integer) :: List | :not_enough_balance
+  def take_necessary_utxos([], _, amount) when amount > 0, do: :not_enough_balance
+
+  def take_necessary_utxos([utxo | remaining], chosen, amount) when amount > 0 do
+    take_necessary_utxos(remaining, [utxo | chosen], amount - utxo.amount)
+  end
+
+  def take_necessary_utxos(_utxos, chosen, _amount), do: chosen
 
   @doc """
     Each transaction consists of multiple inputs and outputs. Inputs to any
@@ -51,7 +82,7 @@ defmodule Elixium.Transaction do
     to the address of the miner, and the output amount is the block reward plus
     any transaction fees from within the transaction
   """
-  @spec generate_coinbase(Decimal, String.t()) :: Transaction
+  @spec generate_coinbase(integer, String.t()) :: Transaction
   def generate_coinbase(amount, miner_address) do
     timestamp = DateTime.utc_now() |> DateTime.to_string()
     txid = Utilities.sha_base16(miner_address <> timestamp)
@@ -65,14 +96,12 @@ defmodule Elixium.Transaction do
     }
   end
 
-  @spec sum_inputs(list) :: Decimal
-  def sum_inputs(inputs) do
-    Enum.reduce(inputs, D.new(0), fn %{amount: amount}, acc -> D.add(amount, acc) end)
-  end
+  @spec sum_inputs(list) :: integer
+  def sum_inputs(inputs), do: Enum.reduce(inputs, 0, & &1.amount + &2)
 
-  @spec calculate_fee(Transaction) :: Decimal
+  @spec calculate_fee(Transaction) :: integer
   def calculate_fee(transaction) do
-    D.sub(sum_inputs(transaction.inputs), sum_inputs(transaction.outputs))
+    sum_inputs(transaction.inputs) - sum_inputs(transaction.outputs)
   end
 
   @doc """
@@ -105,18 +134,17 @@ defmodule Elixium.Transaction do
     Takes in a list of maps that match %{addr: addr, amount: amount} and creates
     a valid transaction.
   """
-  @spec create(list, D.t()) :: Transaction
+  @spec create(list, integer) :: Transaction
   def create(designations, fee) do
     utxos = Elixium.Store.Utxo.retrieve_wallet_utxos()
 
     # Find total amount of elixir being sent in this transaction
-    total_amount = Enum.reduce(designations, D.new(0), fn x, acc -> D.add(x.amount, acc) end)
+    total_amount = Enum.reduce(designations, 0, fn x, acc -> x.amount + acc end)
 
     # Grab enough UTXOs to cover the total amount plus the fee
-    inputs = take_necessary_utxos(utxos, [], D.add(total_amount, fee))
+    inputs = take_necessary_utxos(utxos, [], total_amount + fee)
 
     tx = %Transaction{inputs: inputs}
-
     tx = Map.put(tx, :id, calculate_hash(tx))
 
     # UTXO totals will likely exceed the total amount we're trying to send.
@@ -124,12 +152,12 @@ defmodule Elixium.Transaction do
     remaining =
       inputs
       |> sum_inputs()
-      |> D.sub(D.add(total_amount, fee))
+      |> Kernel.-(total_amount + fee)
 
     # If there is any remaining unspent elixir in this transaction, assign it
     # back to an address we control as change
     designations =
-      if D.cmp(remaining, D.new(0)) == :gt do
+      if remaining > 0 do
         designations ++ [%{addr: hd(tx.inputs).addr, amount: remaining}]
       else
         designations
@@ -137,31 +165,9 @@ defmodule Elixium.Transaction do
 
     tx = Map.merge(tx, calculate_outputs(tx, designations))
 
-    digest = signing_digest(tx)
-
     # Create a signature for each unique address in the inputs
-    sigs =
-      tx.inputs
-      |> Enum.uniq_by(& &1.addr)
-      |> Enum.map(fn %{addr: addr} ->
-        priv = Elixium.KeyPair.get_priv_from_file(addr)
-        sig = Elixium.KeyPair.sign(priv, digest)
-        {addr, sig}
-      end)
+    sigs = create_sig_list(tx.inputs, tx)
 
     Map.put(tx, :sigs, sigs)
-  end
-
-  defp take_necessary_utxos(utxos, chosen, amount) do
-    if D.cmp(amount, 0) == :gt do
-      if utxos == [] do
-        :not_enough_balance
-      else
-        [utxo | remaining] = utxos
-        take_necessary_utxos(remaining, [utxo | chosen], D.sub(amount, utxo.amount))
-      end
-    else
-      chosen
-    end
   end
 end

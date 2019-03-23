@@ -7,16 +7,12 @@ defmodule Elixium.Node.Supervisor do
     Responsible for getting peer information and launching connection handlers
   """
 
-  @default_port 31_013
+  def start_link, do: start_link(self())
+  def start_link([router_pid]), do: start_link(router_pid)
+  def start_link([nil]), do: start_link(self())
 
-  def start_link, do: start_link(self(), @default_port)
-  def start_link([router_pid]) when is_pid(router_pid), do: start_link(router_pid, @default_port)
-  def start_link([port]) when is_number(port), do: start_link(self(), port)
-  def start_link([nil]), do: start_link(self(), @default_port)
-  def start_link([router_pid, nil]), do: start_link(router_pid, @default_port)
-  def start_link([router_pid, port]), do: start_link(router_pid, port)
-
-  def start_link(router_pid, port) do
+  def start_link(router_pid) do
+    port = Application.get_env(:elixium_core, :port)
     Supervisor.start_link(__MODULE__, [router_pid, port], name: __MODULE__)
   end
 
@@ -27,11 +23,7 @@ defmodule Elixium.Node.Supervisor do
     case open_socket(port) do
       :error -> :error
       socket ->
-        # Fetch known peers. We're going to try to connect to them
-        # before setting up a listener
-        peers = find_potential_peers(port)
-
-        handlers = generate_handlers(socket, router_pid, peers)
+        handlers = generate_handlers(socket, router_pid, find_potential_peers())
 
         children = handlers ++ [Elixium.HostAvailability.Supervisor]
 
@@ -40,23 +32,38 @@ defmodule Elixium.Node.Supervisor do
   end
 
   defp generate_handlers(socket, router_pid, peers) do
-    {total_handlers, _} =
-      :maxHandlers
-      |> Elixium.Utilities.get_arg("10")
-      |> Integer.parse()
+    max_bidirectional = Application.get_env(:elixium_core, :max_bidirectional_connections)
+    max_inbound = Application.get_env(:elixium_core, :max_inbound_connections)
 
-    for i <- 1..total_handlers do
-      %{
-        id: :"ConnectionHandler#{i}",
-        start: {
-          Elixium.Node.ConnectionHandler,
-          :start_link,
-          [socket, router_pid, peers, i]
-        },
-        type: :worker,
-        restart: :permanent
-      }
-    end
+    bidirectional =
+      for i <- 1..max_bidirectional do
+        %{
+          id: :"ConnectionHandler#{i}",
+          start: {
+            Elixium.Node.ConnectionHandler,
+            :start_link,
+            [socket, router_pid, peers, i, true]
+          },
+          type: :worker,
+          restart: :permanent
+        }
+      end
+
+    inbound =
+      for i <- (max_bidirectional + 1)..max_inbound do
+        %{
+          id: :"ConnectionHandler#{i}",
+          start: {
+            Elixium.Node.ConnectionHandler,
+            :start_link,
+            [socket, router_pid, peers, i]
+          },
+          type: :worker,
+          restart: :permanent
+        }
+      end
+
+    bidirectional ++ inbound
   end
 
   @spec open_socket(pid) :: pid | :error
@@ -73,41 +80,25 @@ defmodule Elixium.Node.Supervisor do
     end
   end
 
-  # Either loads peers from a local storage or connects to the
-  # bootstrapping registry
-  @spec find_potential_peers(integer) :: List | :not_found
-  defp find_potential_peers(port) do
+
+  # Either returns known peers from our peer storage or gets seed peers
+  # from config
+  @spec find_potential_peers :: List | :not_found
+  defp find_potential_peers do
     case Oracle.inquire(:"Elixir.Elixium.Store.PeerOracle", {:load_known_peers, []}) do
-      [] -> fetch_peers_from_registry(port)
+      [] -> seed_peers()
       peers -> peers
     end
   end
 
-  # Connects to the bootstrapping peer registry and returns a list of
-  # previously connected peers.
-  @spec fetch_peers_from_registry(integer) :: List | :not_found
-  def fetch_peers_from_registry(port_conf) do
-    url = Application.get_env(:elixium_core, :registry_url)
-    own_local_ip = fetch_local_ip()
-    own_public_ip = fetch_public_ip()["ip"] #add condition here
-
-    case :httpc.request(url ++ '/' ++ Integer.to_charlist(port_conf)) do
-      {:ok, {{'HTTP/1.1', 200, 'OK'}, _headers, body}} ->
-        peers =
-          body
-          |> Jason.decode!()
-          |> Enum.map(&peerstring_to_tuple/1)
-          |> Enum.uniq()
-          |> Enum.filter(fn {peer, port} ->
-            port != nil &&
-            validate_own_ip_port(peer, own_local_ip, port, port_conf) == false &&
-            validate_own_ip_port(peer, own_public_ip, port, port_conf) == false
-          end)
-
-        if peers == [], do: :not_found, else: peers
-
-      {:error, _} -> :not_found
-    end
+  @doc """
+    Returns a list of seed peers based on config
+  """
+  @spec seed_peers :: List
+  def seed_peers do
+    :elixium_core
+    |> Application.get_env(:seed_peers)
+    |> Enum.map(&peerstring_to_tuple/1)
   end
 
   @doc """
@@ -148,7 +139,7 @@ defmodule Elixium.Node.Supervisor do
           |> Enum.count
 
         validate_ip(address, size)
-      _-> :ok
+      _ -> :ok
     end
   end
 

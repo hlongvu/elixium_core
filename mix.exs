@@ -4,7 +4,7 @@ defmodule Elixium.Mixfile do
   def project do
     [
       app: :elixium_core,
-      version: "0.4.12",
+      version: "0.6.2",
       elixir: "~> 1.7",
       elixirc_paths: ["lib"],
       start_permanent: Mix.env() == :prod,
@@ -25,7 +25,6 @@ defmodule Elixium.Mixfile do
       {:keccakf1600, "~> 2.0.0"},
       {:credo, ">= 0.0.0", only: [:dev, :test], runtime: false},
       {:ex_doc, ">= 0.0.0", only: [:dev], runtime: false},
-      {:decimal, "~> 1.0"},
       {:strap, "~> 0.1.1"},
       {:jason, "~> 1.0"}
     ]
@@ -73,18 +72,25 @@ defmodule Elixium.Mixfile do
 
         ghost_protocol_version: "v1.0",
 
-        # Url used to bootstrap node connections
-        registry_url: 'https://registry.testnet.elixium.app/',
+        seed_peers: [
+          "206.189.103.38:31013",
+          "142.93.158.121:31013",
+          "142.93.152.227:31013",
+          "139.59.13.96:31013",
+        ],
 
         address_version: "EX0",
 
         # 8 Megabyte block size
         block_size_limit: 8_388_608,
 
-        unix_key_address: "~/.keys",
+        data_path: "~/.elixium",
 
-        data_path: "~/.elixium"
+        port: 31013,
 
+        max_bidirectional_connections: 10,
+
+        max_inbound_connections: 90
       ]
     ]
   end
